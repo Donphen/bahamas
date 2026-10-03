@@ -1,15 +1,11 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import os
+from AI import get_formatted_csv
 
-CSV_FILE = input('Enter the CSV filename or path: ')
-if not os.path.isfile(CSV_FILE):
-    print('File not found')
-    raise SystemExit
-
-
-df = pd.read_csv(CSV_FILE)
+df = get_formatted_csv()
+if df is None:
+    raise SystemExit(1)
 print(df.to_string(index=False))
 
 
