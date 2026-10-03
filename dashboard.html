@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Optimizer</title>
+  <link rel="stylesheet" href="/dashboard.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>Stock Optimizer</h1>
+    <p class="subtitle">Upload your stock file and see exactly what to do next.</p>
+  </header>
+
+  <main class="container">
+
+    <!-- Step 1: Upload -->
+    <section class="panel" id="upload-panel">
+      <h2>Step 1 &mdash; Choose your stock file</h2>
+      <p class="hint">
+        Upload a CSV. AI will match your column names to the fields the optimizer needs:
+        <code>Stock_Name, Current_Quantity, Daily_Demand, Delivery_Time_Days, Cost_Price, Selling_Price</code>
+      </p>
+
+      <div class="upload-row">
+        <input type="file" id="file-input" accept=".csv" />
+        <button id="run-btn" class="btn-primary" disabled>Analyze</button>
+      </div>
+
+      <p class="status" id="status"></p>
+    </section>
+
+    <!-- Step 2: Summary -->
+    <section class="panel hidden" id="summary-panel">
+      <h2>Step 2 &mdash; The big picture</h2>
+      <div class="summary-grid" id="summary-grid"></div>
+    </section>
+
+    <!-- Step 3: Per-item cards -->
+    <section class="panel hidden" id="items-panel">
+      <h2>Step 3 &mdash; What to do for each item</h2>
+      <div class="items-grid" id="items-grid"></div>
+    </section>
+
+    <!-- Step 4: Charts -->
+    <section class="panel hidden" id="charts-panel">
+      <h2>Step 4 &mdash; Two simple charts</h2>
+      <div class="charts-grid">
+        <div class="chart-box">
+          <h3>How many units to order</h3>
+          <canvas id="chart-buy" width="560" height="360"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Expected profit next month ($)</h3>
+          <canvas id="chart-profit" width="560" height="360"></canvas>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="app-footer">
+    <span>Stock Optimizer &mdash; plain-English inventory and pricing advice.</span>
+  </footer>
+
+  <script>
+    // ---------- Helpers ----------
+    const $ = (id) => document.getElementById(id);
+
+    const state = {
+      items: [],
+      summary: null,
+    };
+
+    // Map verdict -> CSS class for colour coding
+    const verdictClass = (v) => {
+      if (v === "BUY NOW" || v === "LOSING MONEY") return "bad";
+      if (v === "ORDER SOON" || v === "TOO EXPENSIVE") return "warn";
+      return "good";
+    };
+
+    const money = (n) =>
+  "R" + Number(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+
+    // ---------- File handling ----------
+    $("file-input").addEventListener("change", (e) => {
+      $("run-btn").disabled = !e.target.files.length;
+      setStatus("");
+    });
+
+    $("run-btn").addEventListener("click", async () => {
+      const file = $("file-input").files[0];
+      if (!file) return;
+
+      setStatus("Preparing your file with AI and analyzing...");
+      const form = new FormData();
+      form.append("file", file);
+
+      try {
+        const res = await fetch("/api/optimise", { method: "POST", body: form });
+        const data = await res.json();
+
+        if (!res.ok) {
+          setStatus("Error: " + (data.error || "unknown"), true);
+          if (data.missing) {
+            setStatus("Missing columns: " + data.missing.join(", "), true);
+          }
+          return;
+        }
+
+        state.items = data.items;
+        state.summary = data.summary;
+
+        renderSummary();
+        renderItems();
+        renderCharts();
+
+        setStatus("Done. See the results below.");
+        ["summary-panel", "items-panel", "charts-panel"].forEach((id) =>
+          $(id).classList.remove("hidden")
+        );
+      } catch (err) {
+        setStatus("Could not reach the server. Is it running?", true);
+      }
+    });
+
+    function setStatus(msg, isError = false) {
+      const el = $("status");
+      el.textContent = msg;
+      el.classList.toggle("error", isError);
+    }
+
+    // ---------- Renderers ----------
+    function renderSummary() {
+      const s = state.summary;
+      const cards = [
+        { label: "Items analyzed", value: s.total_items, cls: "" },
+        { label: "Items to buy now", value: s.items_to_buy_now, cls: s.items_to_buy_now ? "bad" : "good" },
+        { label: "Items losing money", value: s.items_losing_money, cls: s.items_losing_money ? "bad" : "good" },
+        { label: "Expected profit next month", value: money(s.total_expected_profit), cls: "good" },
+      ];
+
+      $("summary-grid").innerHTML = cards
+        .map(
+          (c) => `
+          <div class="summary-card ${c.cls}">
+            <div class="summary-value">${c.value}</div>
+            <div class="summary-label">${c.label}</div>
+          </div>`
+        )
+        .join("");
+    }
+
+    function renderItems() {
+      $("items-grid").innerHTML = state.items
+        .map((it) => {
+          const stockCls = verdictClass(it.stock_action);
+          const priceCls = verdictClass(it.price_action);
+          return `
+            <article class="item-card">
+              <header class="item-header">
+                <h3>${it.name}</h3>
+                <span class="chip ${stockCls}">${it.stock_action}</span>
+              </header>
+
+              <p class="advice">${it.advice}</p>
+
+              <div class="item-rows">
+                <div class="row"><span>Current stock</span><strong>${it.current_quantity}</strong></div>
+                <div class="row"><span>Sells per day</span><strong>${it.daily_demand}</strong></div>
+                <div class="row"><span>Delivery time</span><strong>${it.delivery_days} days</strong></div>
+                <div class="row"><span>Order this many</span><strong>${Math.round(it.optimal_order_qty)}</strong></div>
+                <div class="row"><span>Stock risk</span><strong>${it.stockout_probability.toFixed(1)}%</strong></div>
+                <div class="row"><span>Price verdict</span>
+                  <strong><span class="chip ${priceCls}">${it.price_action}</span></strong>
+                </div>
+                <div class="row"><span>Suggested price</span><strong>${money(it.suggested_price)}</strong></div>
+                <div class="row"><span>Profit next month</span><strong>${money(it.expected_monthly_profit)}</strong></div>
+              </div>
+            </article>`;
+        })
+        .join("");
+    }
+
+    // ---------- Simple Canvas charts ----------
+    function renderCharts() {
+      drawBarChart("chart-buy", state.items.map((i) => i.name), state.items.map((i) => i.optimal_order_qty), {
+        positiveColor: "#d99c9c",
+        zeroColor: "#a1c2a8",
+        axisLabel: "Units",
+      });
+
+      drawBarChart("chart-profit", state.items.map((i) => i.name), state.items.map((i) => i.expected_monthly_profit), {
+        positiveColor: "#a1c2a8",
+        zeroColor: "#d99c9c",
+        axisLabel: "$",
+      });
+    }
+
+    function drawBarChart(canvasId, labels, values, opts) {
+      const canvas = $(canvasId);
+      const ctx = canvas.getContext("2d");
+      const W = canvas.width;
+      const H = canvas.height;
+
+      ctx.clearRect(0, 0, W, H);
+
+      const padding = { top: 20, right: 20, bottom: 70, left: 60 };
+      const innerW = W - padding.left - padding.right;
+      const innerH = H - padding.top - padding.bottom;
+
+      const maxVal = Math.max(1, ...values.map((v) => Math.abs(v)));
+      const barW = innerW / values.length * 0.6;
+      const gap = innerW / values.length;
+
+      // axis
+      ctx.strokeStyle = "#ebeced";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padding.left, padding.top);
+      ctx.lineTo(padding.left, padding.top + innerH);
+      ctx.lineTo(padding.left + innerW, padding.top + innerH);
+      ctx.stroke();
+
+      // bars
+      values.forEach((v, i) => {
+        const x = padding.left + i * gap + (gap - barW) / 2;
+        const h = (Math.abs(v) / maxVal) * innerH;
+        const y = padding.top + innerH - h;
+
+        ctx.fillStyle = v > 0 ? opts.positiveColor : opts.zeroColor;
+        ctx.fillRect(x, y, barW, h);
+
+        // value on top
+        ctx.fillStyle = "#37352f";
+        ctx.font = "12px sans-serif";
+        ctx.textAlign = "center";
+        const display = opts.axisLabel === "$" ? "$" + v.toFixed(0) : v.toFixed(0);
+        ctx.fillText(display, x + barW / 2, y - 4);
+
+        // label under
+        ctx.save();
+        ctx.translate(x + barW / 2, padding.top + innerH + 12);
+        ctx.rotate(-Math.PI / 6);
+        ctx.textAlign = "right";
+        ctx.fillStyle = "#787774";
+        const name = labels[i].length > 14 ? labels[i].slice(0, 13) + "…" : labels[i];
+        ctx.fillText(name, 0, 0);
+        ctx.restore();
+      });
+    }
+  </script>
+</body>
+</html>

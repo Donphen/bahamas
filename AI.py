@@ -9,9 +9,8 @@ load_dotenv(Path(__file__).with_name(".env"))
 
 class InventoryAIFormatter:
     """
-    This class ONLY reads a CSV, identifies column names, drops extra information, 
-    leaves missing information blank, relabels columns to standard formats, 
-    and returns a clean Pandas DataFrame.
+    Map CSV headers to the optimiser's schema and return only its required columns.
+    Data rows are transformed locally; the AI receives only the input headers.
     """
     def __init__(self, api_key=None):
         self.client = OpenAI(
@@ -24,14 +23,8 @@ class InventoryAIFormatter:
             "Selling_Price", "Daily_Demand", "Delivery_Time_Days"
         ]
 
-    def format_csv(self, file_path):
-        # 1. Read the raw, messy CSV
-        try:
-            raw_df = pd.read_csv(file_path)
-        except Exception as e:
-            print(f"Error reading CSV: {e}")
-            return None
-
+    def format_dataframe(self, raw_df):
+        """Map a dataframe's columns to the schema expected by the optimiser."""
         # 2. Ask the AI to map headers; transform all rows locally.
         prompt = f"""
         Map the input CSV column names to this exact schema:
@@ -46,45 +39,45 @@ class InventoryAIFormatter:
         Input column names: {raw_df.columns.tolist()}
         """
 
-        print(" Bahamas AI is reading the CSV. please be patient.")
-        
+        # Send only the headers to the AI; rows are transformed locally.
+        response = self.client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "You output only valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0
+        )
+
+        if not response.choices or not response.choices[0].message.content:
+            raise ValueError("AI returned an empty column mapping.")
+
+        parsed_json = json.loads(response.choices[0].message.content)
+        column_mapping = parsed_json.get("column_mapping", {})
+        if not isinstance(column_mapping, dict):
+            raise ValueError("AI response must contain a column_mapping object.")
+
+        clean_df = pd.DataFrame(index=raw_df.index)
+        for target_column in self.target_columns:
+            source_column = column_mapping.get(target_column)
+            if isinstance(source_column, str) and source_column in raw_df.columns:
+                clean_df[target_column] = raw_df[source_column]
+            else:
+                clean_df[target_column] = float("nan")
+
+        for col in self.target_columns[1:]:
+            clean_df[col] = pd.to_numeric(clean_df[col], errors="coerce")
+
+        return clean_df[self.target_columns]
+
+    def format_csv(self, file_path):
+        """Read and format a CSV file for the optimiser."""
         try:
-            # 3. Request only the small header mapping, not a copy of every row.
-            response = self.client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[
-                    {"role": "system", "content": "You output only valid JSON."},
-                    {"role": "user", "content": prompt}
-                ],
-                response_format={ "type": "json_object" },
-                temperature=0.0 # Keep temperature at 0 for strict data mapping
-            )
-            
-            # 4. Apply the mapping locally so response size does not grow with the CSV.
-            ai_output = response.choices[0].message.content
-            parsed_json = json.loads(ai_output)
-            column_mapping = parsed_json.get("column_mapping", {})
-            if not isinstance(column_mapping, dict):
-                raise ValueError("AI response must contain a column_mapping object")
-
-            clean_df = pd.DataFrame(index=raw_df.index)
-            for target_column in self.target_columns:
-                source_column = column_mapping.get(target_column)
-                if isinstance(source_column, str) and source_column in raw_df.columns:
-                    clean_df[target_column] = raw_df[source_column]
-                else:
-                    clean_df[target_column] = float("nan")
-
-            # Ensure data types are numeric where applicable so math doesn't break later
-            for col in self.target_columns[1:]:
-                if col in clean_df.columns:
-                    clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce')
-            
-            print("✅ Data perfectly formatted for the main script.")
-            return clean_df[self.target_columns] # Return only the strict columns
-            
+            raw_df = pd.read_csv(file_path)
+            return self.format_dataframe(raw_df)
         except Exception as e:
-            print(f"❌ AI Formatting failed: {e}")
+            print(f"AI formatting failed: {e}")
             return None
 
 
