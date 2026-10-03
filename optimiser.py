@@ -124,10 +124,10 @@ for index, row in df.iterrows():
     if pd.isna(row['Cost_Price']) or pd.isna(row['Selling_Price']) or row['Cost_Price'] <= 0:
         print("  - Price optimization skipped (missing or zero cost/price input).")
     elif row['Selling_Price'] < row['Cost_Price']:
-        print(f"  - ALERT: Running at a LOSS. Change price from ${row['Selling_Price']:.2f} to ${row['Suggested_Price']:.2f}")
+        print(f"  - ALERT: Running at a LOSS. Change price from R{row['Selling_Price']:.2f} to R{row['Suggested_Price']:.2f}")
     elif row['Selling_Price'] > row['Cost_Price'] * 3.5:
-        print(f"  - ALERT: Overcharging risk. Change price from ${row['Selling_Price']:.2f} to ${row['Suggested_Price']:.2f}")
+        print(f"  - ALERT: Overcharging risk. Change price from R{row['Selling_Price']:.2f} to R{row['Suggested_Price']:.2f}")
     else:
-        print(f"  - Price healthy at ${row['Selling_Price']:.2f}.")
+        print(f"  - Price healthy at R{row['Selling_Price']:.2f}.")
 
 plt.show()
