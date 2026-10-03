@@ -51,12 +51,12 @@ class InventoryAIFormatter:
         )
 
         if not response.choices or not response.choices[0].message.content:
-            raise ValueError("AI returned an empty column mapping.")
+            raise ValueError("Bahamas AI returned an empty column mapping.")
 
         parsed_json = json.loads(response.choices[0].message.content)
         column_mapping = parsed_json.get("column_mapping", {})
         if not isinstance(column_mapping, dict):
-            raise ValueError("AI response must contain a column_mapping object.")
+            raise ValueError("Bahamas AI response must contain a column_mapping object.")
 
         clean_df = pd.DataFrame(index=raw_df.index)
         for target_column in self.target_columns:
@@ -77,7 +77,7 @@ class InventoryAIFormatter:
             raw_df = pd.read_csv(file_path)
             return self.format_dataframe(raw_df)
         except Exception as e:
-            print(f"AI formatting failed: {e}")
+            print(f"formatting failed: {e}")
             return None
 
 
