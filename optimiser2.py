@@ -19,7 +19,8 @@ def run_optimiser(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     df["Reorder_Point"] = df["Daily_Demand"] * df["Delivery_Time_Days"]
-    df["Days_Of_Inventory"] = df["Current_Quantity"] / df["Daily_Demand"]
+    safe_demand = df["Daily_Demand"].where(df["Daily_Demand"] != 0)
+    df["Days_Of_Inventory"] = df["Current_Quantity"] / safe_demand
     df["Buffer_Days"] = df["Days_Of_Inventory"] - df["Delivery_Time_Days"]
 
     df["Stockout_Probability_%"] = np.where(
@@ -33,13 +34,16 @@ def run_optimiser(df: pd.DataFrame) -> pd.DataFrame:
         (df["Daily_Demand"] * 30) + df["Reorder_Point"] - df["Current_Quantity"],
     )
 
-    df["Suggested_Price"] = df["Selling_Price"]
-    df.loc[df["Selling_Price"] < df["Cost_Price"] * 1.15, "Suggested_Price"] = (
-        df["Cost_Price"] * 1.15
+    price_inputs_available = (
+        df["Selling_Price"].notna()
+        & df["Cost_Price"].notna()
+        & (df["Cost_Price"] > 0)
     )
-    df.loc[df["Selling_Price"] > df["Cost_Price"] * 3.5, "Suggested_Price"] = (
-        df["Cost_Price"] * 3.5
-    )
+    df["Suggested_Price"] = df["Selling_Price"].where(price_inputs_available)
+    below_minimum = price_inputs_available & (df["Selling_Price"] < df["Cost_Price"] * 1.15)
+    above_maximum = price_inputs_available & (df["Selling_Price"] > df["Cost_Price"] * 3.5)
+    df.loc[below_minimum, "Suggested_Price"] = df.loc[below_minimum, "Cost_Price"] * 1.15
+    df.loc[above_maximum, "Suggested_Price"] = df.loc[above_maximum, "Cost_Price"] * 3.5
 
     df["Optimized_Profit_Per_Unit"] = df["Suggested_Price"] - df["Cost_Price"]
     df["Expected_Monthly_Profit"] = (
@@ -48,6 +52,8 @@ def run_optimiser(df: pd.DataFrame) -> pd.DataFrame:
 
     # Plain-English verdicts
     def stock_action(row):
+        if pd.isna(row["Stockout_Probability_%"]):
+            return "INSUFFICIENT DATA"
         if row["Stockout_Probability_%"] > 75:
             return "BUY NOW"
         if row["Stockout_Probability_%"] > 30:
@@ -55,6 +61,8 @@ def run_optimiser(df: pd.DataFrame) -> pd.DataFrame:
         return "STOCK IS FINE"
 
     def price_action(row):
+        if pd.isna(row["Selling_Price"]) or pd.isna(row["Cost_Price"]) or row["Cost_Price"] <= 0:
+            return "INSUFFICIENT DATA"
         if row["Selling_Price"] < row["Cost_Price"]:
             return "LOSING MONEY"
         if row["Selling_Price"] > row["Cost_Price"] * 3.5:
@@ -77,13 +85,18 @@ def make_advice(row) -> str:
     """Short, human-readable recommendation for one item."""
     parts = []
 
-    if row["Optimal_Order_Qty"] > 0:
+    if pd.isna(row["Optimal_Order_Qty"]):
+        parts.append("Stock advice unavailable because required inputs are missing.")
+    elif row["Optimal_Order_Qty"] > 0:
         parts.append(f"Order about {row['Optimal_Order_Qty']:.0f} more units.")
     else:
         parts.append("You already have enough stock.")
 
-    if row["Selling_Price"] < row["Cost_Price"]:
+    if pd.isna(row["Selling_Price"]) or pd.isna(row["Cost_Price"]) or row["Cost_Price"] <= 0:
+        parts.append("Price advice unavailable because required inputs are missing.")
+    elif row["Selling_Price"] < row["Cost_Price"]:
         parts.append(
+
             f"You are losing money. Sell at {_rand(row['Suggested_Price'])} "
             f"instead of {_rand(row['Selling_Price'])}."
         )
@@ -149,55 +162,56 @@ def optimise():
                 }), 503
 
             df = InventoryAIFormatter().format_dataframe(raw_df)
-            unmapped = [
-                column for column in REQUIRED_COLUMNS
-                if column not in df.columns or df[column].isna().all()
-            ]
-            if unmapped:
-                return jsonify({
-                    "error": "AI could not map all required inventory columns.",
-                    "missing": unmapped,
-                    "required": REQUIRED_COLUMNS,
-                }), 400
         elif request.is_json and "rows" in request.get_json():
             df = pd.DataFrame(request.get_json()["rows"])
         else:
             return jsonify({"error": "No file or rows provided."}), 400
 
-        missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
-        if missing:
+        for column in REQUIRED_COLUMNS:
+            if column not in df.columns:
+                df[column] = np.nan
+
+        df["Stock_Name"] = df["Stock_Name"].replace(r"^\s*$", np.nan, regex=True)
+
+        # Preserve partial rows; only reject files missing most of the schema.
+        for column in REQUIRED_COLUMNS:
+            if column != "Stock_Name":
+                df[column] = pd.to_numeric(df[column], errors="coerce")
+
+        missing = [column for column in REQUIRED_COLUMNS if df[column].isna().all()]
+        if len(missing) > 4:
             return jsonify({
-                "error": "Missing required columns.",
+                "error": "Insufficient information: more than four required columns are missing.",
                 "missing": missing,
                 "required": REQUIRED_COLUMNS,
             }), 400
 
-        # numeric coercion
-        for col in REQUIRED_COLUMNS:
-            if col != "Stock_Name":
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-        df = df.dropna(subset=[c for c in REQUIRED_COLUMNS if c != "Stock_Name"])
-
+        df = df.dropna(subset=REQUIRED_COLUMNS, how="all").copy()
         if df.empty:
             return jsonify({"error": "No valid rows after parsing."}), 400
 
+        df["Stock_Name"] = df["Stock_Name"].fillna("Unnamed item")
+
         result = run_optimiser(df)
+
+        def json_number(value):
+            return float(value) if pd.notna(value) else None
 
         items = []
         for _, row in result.iterrows():
             items.append({
                 "name": row["Stock_Name"],
-                "current_quantity": float(row["Current_Quantity"]),
-                "daily_demand": float(row["Daily_Demand"]),
-                "delivery_days": float(row["Delivery_Time_Days"]),
-                "cost_price": float(row["Cost_Price"]),
-                "selling_price": float(row["Selling_Price"]),
-                "reorder_point": float(row["Reorder_Point"]),
-                "days_of_inventory": float(row["Days_Of_Inventory"]),
-                "stockout_probability": float(row["Stockout_Probability_%"]),
-                "optimal_order_qty": float(row["Optimal_Order_Qty"]),
-                "suggested_price": float(row["Suggested_Price"]),
-                "expected_monthly_profit": float(row["Expected_Monthly_Profit"]),
+                "current_quantity": json_number(row["Current_Quantity"]),
+                "daily_demand": json_number(row["Daily_Demand"]),
+                "delivery_days": json_number(row["Delivery_Time_Days"]),
+                "cost_price": json_number(row["Cost_Price"]),
+                "selling_price": json_number(row["Selling_Price"]),
+                "reorder_point": json_number(row["Reorder_Point"]),
+                "days_of_inventory": json_number(row["Days_Of_Inventory"]),
+                "stockout_probability": json_number(row["Stockout_Probability_%"]),
+                "optimal_order_qty": json_number(row["Optimal_Order_Qty"]),
+                "suggested_price": json_number(row["Suggested_Price"]),
+                "expected_monthly_profit": json_number(row["Expected_Monthly_Profit"]),
                 "stock_action": row["Stock_Action"],
                 "price_action": row["Price_Action"],
                 "advice": make_advice(row),
@@ -205,7 +219,9 @@ def optimise():
 
         summary = {
             "total_items": len(items),
-            "total_expected_profit": float(result["Expected_Monthly_Profit"].sum()),
+            "total_expected_profit": json_number(
+                result["Expected_Monthly_Profit"].sum(min_count=1)
+            ),
             "items_to_buy_now": int((result["Stock_Action"] == "BUY NOW").sum()),
             "items_losing_money": int((result["Price_Action"] == "LOSING MONEY").sum()),
         }
