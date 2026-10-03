@@ -68,6 +68,11 @@ def run_optimiser(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _rand(amount) -> str:
+    """Format a number as South African Rand, e.g. R2 800.00"""
+    return "R" + f"{amount:,.2f}".replace(",", " ")
+
+
 def make_advice(row) -> str:
     """Short, human-readable recommendation for one item."""
     parts = []
@@ -79,16 +84,16 @@ def make_advice(row) -> str:
 
     if row["Selling_Price"] < row["Cost_Price"]:
         parts.append(
-            f"You are losing money. Sell at ${row['Suggested_Price']:.2f} "
-            f"instead of ${row['Selling_Price']:.2f}."
+            f"You are losing money. Sell at {_rand(row['Suggested_Price'])} "
+            f"instead of {_rand(row['Selling_Price'])}."
         )
     elif row["Selling_Price"] > row["Cost_Price"] * 3.5:
         parts.append(
-            f"You may be charging too much. Try ${row['Suggested_Price']:.2f} "
-            f"instead of ${row['Selling_Price']:.2f}."
+            f"You may be charging too much. Try {_rand(row['Suggested_Price'])} "
+            f"instead of {_rand(row['Selling_Price'])}."
         )
     else:
-        parts.append(f"Price is fine at ${row['Selling_Price']:.2f}.")
+        parts.append(f"Price is fine at {_rand(row['Selling_Price'])}.")
 
     return " ".join(parts)
 

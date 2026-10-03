@@ -51,7 +51,7 @@
           <canvas id="chart-buy" width="560" height="360"></canvas>
         </div>
         <div class="chart-box">
-          <h3>Expected profit next month ($)</h3>
+          <h3>Expected profit next month (R)</h3>
           <canvas id="chart-profit" width="560" height="360"></canvas>
         </div>
       </div>
@@ -92,7 +92,7 @@
       const file = $("file-input").files[0];
       if (!file) return;
 
-      setStatus("Preparing your file with AI and analyzing...");
+      setStatus("Preparing your file with bahamas and analyzing...");
       const form = new FormData();
       form.append("file", file);
 
@@ -193,7 +193,7 @@
       drawBarChart("chart-profit", state.items.map((i) => i.name), state.items.map((i) => i.expected_monthly_profit), {
         positiveColor: "#a1c2a8",
         zeroColor: "#d99c9c",
-        axisLabel: "$",
+        axisLabel: "R",
       });
     }
 
@@ -235,7 +235,7 @@
         ctx.fillStyle = "#37352f";
         ctx.font = "12px sans-serif";
         ctx.textAlign = "center";
-        const display = opts.axisLabel === "$" ? "$" + v.toFixed(0) : v.toFixed(0);
+        const display = opts.axisLabel === "R" ? "R" + v.toFixed(0) : v.toFixed(0);
         ctx.fillText(display, x + barW / 2, y - 4);
 
         // label under

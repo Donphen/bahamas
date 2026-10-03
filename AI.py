@@ -30,11 +30,12 @@ class InventoryAIFormatter:
         Map the input CSV column names to this exact schema:
         {self.target_columns}
 
-        Return only a JSON object with a "column_mapping" object. Use each exact input
-        column name as the value, or null when no input column matches. Map product
-        identifiers or names to Stock_Name, on-hand inventory to Current_Quantity,
-        acquisition cost to Cost_Price, customer price to Selling_Price, sales or
-        demand forecast to Daily_Demand, and supplier lead time to Delivery_Time_Days.
+        All monetary values are in South African Rand (ZAR). Return only a JSON object
+        with a "column_mapping" object. Use each exact input column name as the value,
+        or null when no input column matches. Map product identifiers or names to
+        Stock_Name, on-hand inventory to Current_Quantity, acquisition cost to
+        Cost_Price, customer price to Selling_Price, sales or demand forecast to
+        Daily_Demand, and supplier lead time to Delivery_Time_Days.
 
         Input column names: {raw_df.columns.tolist()}
         """
