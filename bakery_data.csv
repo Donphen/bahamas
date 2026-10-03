@@ -1,0 +1,6 @@
+Stock_Name,Current_Quantity,Cost_Price,Selling_Price,Daily_Demand,Delivery_Time_Days
+Flour (kg),20,1.50,4.00,12,2
+Sugar (kg),50,1.20,3.00,5,3
+Butter (kg),15,4.00,4.20,4,2
+Yeast (packs),200,0.50,2.50,15,4
+Almonds (kg),8,12.00,20.00,1,5

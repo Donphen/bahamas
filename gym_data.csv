@@ -1,0 +1,6 @@
+Stock_Name,Current_Quantity,Cost_Price,Selling_Price,Daily_Demand,Delivery_Time_Days
+Whey Protein,120,25.00,55.00,12,5
+Pre-Workout,15,15.00,35.00,8,4
+Creatine,80,10.00,11.00,15,7
+Protein Bars,300,12.00,45.00,20,3
+Shaker Bottles,45,2.00,10.00,5,10
