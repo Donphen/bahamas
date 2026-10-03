@@ -10,7 +10,7 @@ load_dotenv(Path(__file__).with_name(".env"))
 class InventoryAIFormatter:
     """
     This class ONLY reads a CSV, identifies column names, drops extra information, 
-    adds missing information (as 0), relabels columns to standard formats, 
+    leaves missing information blank, relabels columns to standard formats, 
     and returns a clean Pandas DataFrame.
     """
     def __init__(self, api_key=None):
@@ -28,54 +28,57 @@ class InventoryAIFormatter:
         # 1. Read the raw, messy CSV
         try:
             raw_df = pd.read_csv(file_path)
-            raw_csv_text = raw_df.to_csv(index=False)
         except Exception as e:
             print(f"Error reading CSV: {e}")
             return None
 
-        # 2. Instruct the AI on exactly how to format the data
+        # 2. Ask the AI to map headers; transform all rows locally.
         prompt = f"""
-        You are a strict data formatting algorithm. 
-        I am giving you a raw CSV file. I need it mapped to this exact schema:
+        Map the input CSV column names to this exact schema:
         {self.target_columns}
 
-        Rules:
-        1. Identify differently labeled columns (e.g., 'Item Name' or 'Product') and map them to 'Stock_Name'.
-        2. DROP any extra information or columns that are not in the exact schema list.
-        3. If a required schema column is completely missing from the raw data, add it and put the number 0 for every row.
-        4. If a specific cell is blank or null, put the number 0.
-        5. Output strictly a JSON object containing a key "formatted_data" which holds an array of the cleaned row objects. 
+        Return only a JSON object with a "column_mapping" object. Use each exact input
+        column name as the value, or null when no input column matches. Map product
+        identifiers or names to Stock_Name, on-hand inventory to Current_Quantity,
+        acquisition cost to Cost_Price, customer price to Selling_Price, sales or
+        demand forecast to Daily_Demand, and supplier lead time to Delivery_Time_Days.
+
+        Input column names: {raw_df.columns.tolist()}
         """
 
-        print("🤖 AI is reading the CSV, dropping extras, relabeling, and filling blanks with 0...")
+        print(" Bahamas AI is reading the CSV. please be patient.")
         
         try:
-            # 3. Call the API
+            # 3. Request only the small header mapping, not a copy of every row.
             response = self.client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[
                     {"role": "system", "content": "You output only valid JSON."},
-                    {"role": "user", "content": prompt + "\n\nRaw CSV:\n" + raw_csv_text}
+                    {"role": "user", "content": prompt}
                 ],
                 response_format={ "type": "json_object" },
                 temperature=0.0 # Keep temperature at 0 for strict data mapping
             )
             
-            # 4. Parse the output into a clean DataFrame
+            # 4. Apply the mapping locally so response size does not grow with the CSV.
             ai_output = response.choices[0].message.content
             parsed_json = json.loads(ai_output)
-            clean_data = parsed_json.get("formatted_data", [])
-            
-            clean_df = pd.DataFrame(clean_data)
+            column_mapping = parsed_json.get("column_mapping", {})
+            if not isinstance(column_mapping, dict):
+                raise ValueError("AI response must contain a column_mapping object")
 
-            for col in self.target_columns:
-                if col not in clean_df.columns:
-                    clean_df[col] = 0
+            clean_df = pd.DataFrame(index=raw_df.index)
+            for target_column in self.target_columns:
+                source_column = column_mapping.get(target_column)
+                if isinstance(source_column, str) and source_column in raw_df.columns:
+                    clean_df[target_column] = raw_df[source_column]
+                else:
+                    clean_df[target_column] = float("nan")
 
             # Ensure data types are numeric where applicable so math doesn't break later
             for col in self.target_columns[1:]:
                 if col in clean_df.columns:
-                    clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
+                    clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce')
             
             print("✅ Data perfectly formatted for the main script.")
             return clean_df[self.target_columns] # Return only the strict columns

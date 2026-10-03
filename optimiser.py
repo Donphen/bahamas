@@ -11,7 +11,9 @@ print(df.to_string(index=False))
 
 df['Reorder_Point'] = df['Daily_Demand'] * df['Delivery_Time_Days']
 
-df['Days_Of_Inventory'] = df['Current_Quantity'] / df['Daily_Demand']
+df['Days_Of_Inventory'] = df['Current_Quantity'].div(
+    df['Daily_Demand'].where(df['Daily_Demand'] != 0)
+)
 df['Buffer_Days'] = df['Days_Of_Inventory'] - df['Delivery_Time_Days']
 
 df['Stockout_Probability_%'] = np.where(
@@ -22,11 +24,16 @@ df['Stockout_Probability_%'] = np.where(
 df['Optimal_Order_Qty'] = np.maximum(0, (df['Daily_Demand'] * 30) + df['Reorder_Point'] - df['Current_Quantity'])
 
 df['Current_Profit_Per_Unit'] = df['Selling_Price'] - df['Cost_Price']
-df['Current_Margin_%'] = (df['Current_Profit_Per_Unit'] / df['Cost_Price']) * 100
+df['Current_Margin_%'] = (
+    df['Current_Profit_Per_Unit'] / df['Cost_Price'].where(df['Cost_Price'] != 0)
+) * 100
 
-df['Suggested_Price'] = df['Selling_Price']
-df.loc[df['Selling_Price'] < df['Cost_Price'] * 1.15, 'Suggested_Price'] = df['Cost_Price'] * 1.15
-df.loc[df['Selling_Price'] > df['Cost_Price'] * 3.5, 'Suggested_Price'] = df['Cost_Price'] * 3.5
+price_inputs_available = df['Selling_Price'].notna() & df['Cost_Price'].notna() & (df['Cost_Price'] > 0)
+df['Suggested_Price'] = df['Selling_Price'].where(price_inputs_available)
+below_minimum_price = price_inputs_available & (df['Selling_Price'] < df['Cost_Price'] * 1.15)
+above_maximum_price = price_inputs_available & (df['Selling_Price'] > df['Cost_Price'] * 3.5)
+df.loc[below_minimum_price, 'Suggested_Price'] = df.loc[below_minimum_price, 'Cost_Price'] * 1.15
+df.loc[above_maximum_price, 'Suggested_Price'] = df.loc[above_maximum_price, 'Cost_Price'] * 3.5
 
 df['Optimized_Profit_Per_Unit'] = df['Suggested_Price'] - df['Cost_Price']
 
@@ -78,12 +85,16 @@ ax2.spines['right'].set_visible(False)
 ax3 = plt.subplot(2, 2, 3)
 positive_profit_df = df[df['Expected_Monthly_Profit'] > 0]
 pie_colors = [COLORS['dark'], COLORS['green'], COLORS['yellow'], COLORS['red'], '#b5b5b5']
-ax3.pie(positive_profit_df['Expected_Monthly_Profit'], 
-        labels=positive_profit_df['Stock_Name'], 
-        autopct='%1.1f%%', 
-        startangle=90, 
-        colors=pie_colors,
-        textprops={'color': COLORS['dark']})
+if positive_profit_df.empty:
+    ax3.text(0.5, 0.5, 'No positive profit data available', ha='center', va='center', color=COLORS['gray'])
+    ax3.set_axis_off()
+else:
+    ax3.pie(positive_profit_df['Expected_Monthly_Profit'], 
+            labels=positive_profit_df['Stock_Name'], 
+            autopct='%1.1f%%', 
+            startangle=90, 
+            colors=pie_colors,
+            textprops={'color': COLORS['dark']})
 ax3.set_title('Which Stock to Buy More (Expected Monthly Profit)')
 
 ax4 = plt.subplot(2, 2, 4)
@@ -102,10 +113,17 @@ plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 print("\n--- INVENTORY & PROFIT OPTIMIZATION REPORT ---")
 for index, row in df.iterrows():
     print(f"\nItem: {row['Stock_Name']}")
-    print(f"  - Current Stock: {row['Current_Quantity']} (Reorder at {row['Reorder_Point']})")
-    print(f"  - Stockout Risk: {row['Stockout_Probability_%']:.1f}%")
-    print(f"  - Optimal Order Qty: {row['Optimal_Order_Qty']:.0f} units")
-    if row['Selling_Price'] < row['Cost_Price']:
+    if pd.notna(row['Current_Quantity']):
+        print(f"  - Current Stock: {row['Current_Quantity']}")
+    if pd.notna(row['Reorder_Point']):
+        print(f"  - Reorder Point: {row['Reorder_Point']}")
+    if pd.notna(row['Stockout_Probability_%']):
+        print(f"  - Stockout Risk: {row['Stockout_Probability_%']:.1f}%")
+    if pd.notna(row['Optimal_Order_Qty']):
+        print(f"  - Optimal Order Qty: {row['Optimal_Order_Qty']:.0f} units")
+    if pd.isna(row['Cost_Price']) or pd.isna(row['Selling_Price']) or row['Cost_Price'] <= 0:
+        print("  - Price optimization skipped (missing or zero cost/price input).")
+    elif row['Selling_Price'] < row['Cost_Price']:
         print(f"  - ALERT: Running at a LOSS. Change price from ${row['Selling_Price']:.2f} to ${row['Suggested_Price']:.2f}")
     elif row['Selling_Price'] > row['Cost_Price'] * 3.5:
         print(f"  - ALERT: Overcharging risk. Change price from ${row['Selling_Price']:.2f} to ${row['Suggested_Price']:.2f}")
